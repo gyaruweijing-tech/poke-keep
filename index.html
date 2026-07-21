@@ -2,12 +2,20 @@
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
-    
-    <!-- ▼ ブラウザのタブに表示されるアイコン ▼ -->
+
+    <!-- ▼ ブラウザのタブに表示されるアイコン（favicon） ▼ -->
     <link rel="icon" type="image/png" href="/pwa-icon.png" />
-    <!-- ▼ スマホのホーム画面に追加した時のアイコン（これが一番重要！） ▼ -->
-    <link rel="apple-touch-icon" href="/pwa-icon.png" />
-    
+
+    <!-- ▼ iPhone/iPad のホーム画面に追加した時のアイコン（180x180・正方形） ▼ -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="PokeKeep" />
+
+    <!-- ▼ Android / Chrome のホーム画面用（PWAマニフェスト） ▼ -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#7c3aed" />
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PokeKeep</title>
   </head>

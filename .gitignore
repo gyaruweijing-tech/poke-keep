@@ -26,3 +26,6 @@ dist-ssr
 # Environment variables
 .env
 .env*.local
+
+##これあげる必要ないじゃんと途中で気づいた。もすでにGithubにはあがっているかもですが
+PROGRESS.md

@@ -13,6 +13,12 @@ export default function App() {
   const [content, setContent] = useState('');
   const [result, setResult] = useState('memo');
 
+  // --- 編集中のメモの状態（どのカードを開いているか＋入力中の値） ---
+  const [editingId, setEditingId] = useState(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editContent, setEditContent] = useState('');
+  const [editResult, setEditResult] = useState('memo');
+
   // --- 1. アプリ起動時にIDカード（セッション）を確認 ---
   useEffect(() => {
     // 現在のセッションを取得
@@ -99,6 +105,45 @@ export default function App() {
     setTitle('');
     setContent('');
     setResult('memo');
+  };
+
+  // --- 編集モードに入る（カードの中身を編集用の入力欄に写す） ---
+  const startEdit = (note) => {
+    setEditingId(note.id);
+    setEditTitle(note.title || '');
+    setEditContent(note.content || '');
+    setEditResult(note.result || 'memo');
+  };
+
+  // --- 編集をやめる（保存せずに閉じる） ---
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditTitle('');
+    setEditContent('');
+    setEditResult('memo');
+  };
+
+  // --- 編集内容をDBに上書き保存（UPDATE） ---
+  const handleUpdateNote = async () => {
+    if (!editingId) return;
+
+    const { error } = await supabase
+      .from('battle_notes')
+      .update({
+        title: editTitle,
+        content: editContent,
+        result: editResult,
+      })
+      .eq('id', editingId); // ★ このIDの行だけを書き換える
+
+    if (error) {
+      console.error("更新エラー:", error);
+      alert('更新できませんでした: ' + error.message);
+      return;
+    }
+
+    cancelEdit();
+    fetchNotes();
   };
 
   // ==========================================
@@ -204,16 +249,75 @@ export default function App() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {notes.map(note => (
           <div key={note.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-shadow relative">
-            <h3 className="font-bold mb-2 pr-16">{note.title}</h3>
-            <p className="text-sm text-gray-600 whitespace-pre-wrap">{note.content}</p>
-            
-            <span className={`absolute top-4 right-4 text-xs font-bold px-2 py-1 rounded ${
-              note.result === 'win' ? 'bg-blue-100 text-blue-700' :
-              note.result === 'lose' ? 'bg-red-100 text-red-700' :
-              'bg-gray-100 text-gray-700'
-            }`}>
-              {note.result.toUpperCase()}
-            </span>
+            {editingId === note.id ? (
+              /* ✏️ 編集モード：入力欄に切り替わる */
+              <div>
+                <input
+                  type="text"
+                  placeholder="タイトル"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="w-full font-bold outline-none mb-2 border-b border-gray-300 focus:border-red-500 transition"
+                />
+                <textarea
+                  placeholder="バトルメモ"
+                  value={editContent}
+                  onChange={(e) => setEditContent(e.target.value)}
+                  className="w-full text-sm text-gray-600 outline-none resize-none mb-3 border-b border-gray-300 focus:border-red-500 transition"
+                  rows="4"
+                ></textarea>
+
+                <div className="flex justify-between items-center gap-2">
+                  <select
+                    value={editResult}
+                    onChange={(e) => setEditResult(e.target.value)}
+                    className="p-1 border rounded text-xs outline-none font-bold text-gray-600 bg-gray-50"
+                  >
+                    <option value="memo">MEMO</option>
+                    <option value="win">WIN</option>
+                    <option value="lose">LOSE</option>
+                  </select>
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={cancelEdit}
+                      className="text-xs font-bold text-gray-500 px-2 py-1 hover:text-gray-800 transition"
+                    >
+                      やめる
+                    </button>
+                    <button
+                      onClick={handleUpdateNote}
+                      className="bg-red-600 text-white text-xs px-4 py-1 rounded font-bold hover:bg-red-700 transition"
+                    >
+                      保存
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* 📄 通常モード：いつもの表示 */
+              <div>
+                <h3 className="font-bold mb-2 pr-16">{note.title}</h3>
+                <p className="text-sm text-gray-600 whitespace-pre-wrap">{note.content}</p>
+
+                <span className={`absolute top-4 right-4 text-xs font-bold px-2 py-1 rounded ${
+                  note.result === 'win' ? 'bg-blue-100 text-blue-700' :
+                  note.result === 'lose' ? 'bg-red-100 text-red-700' :
+                  'bg-gray-100 text-gray-700'
+                }`}>
+                  {note.result.toUpperCase()}
+                </span>
+
+                <div className="flex justify-end mt-3">
+                  <button
+                    onClick={() => startEdit(note)}
+                    className="text-xs font-bold text-gray-400 hover:text-red-600 transition"
+                  >
+                    ✏️ 編集
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         ))}
       </div>

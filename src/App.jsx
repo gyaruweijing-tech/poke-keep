@@ -13,11 +13,14 @@ export default function App() {
   const [content, setContent] = useState('');
   const [result, setResult] = useState('memo');
 
-  // --- 編集中のメモの状態（どのカードを開いているか＋入力中の値） ---
-  const [editingId, setEditingId] = useState(null);
+  // --- 開いているメモの状態（パネル） ---
+  const [openNote, setOpenNote] = useState(null); // 開いた瞬間の元データ（変更検知の比較用）
   const [editTitle, setEditTitle] = useState('');
   const [editContent, setEditContent] = useState('');
   const [editResult, setEditResult] = useState('memo');
+  const [menuOpen, setMenuOpen] = useState(false);      // 右下「⋯」メニュー
+  const [confirmDelete, setConfirmDelete] = useState(false); // 削除の確認ダイアログ
+  const [saving, setSaving] = useState(false);          // 二重送信よけ
 
   // --- 1. アプリ起動時にIDカード（セッション）を確認 ---
   useEffect(() => {
@@ -107,44 +110,118 @@ export default function App() {
     setResult('memo');
   };
 
-  // --- 編集モードに入る（カードの中身を編集用の入力欄に写す） ---
-  const startEdit = (note) => {
-    setEditingId(note.id);
+  // --- カードをタップしてパネルを開く ---
+  const handleOpenNote = (note) => {
+    setOpenNote(note);
     setEditTitle(note.title || '');
     setEditContent(note.content || '');
     setEditResult(note.result || 'memo');
+    setMenuOpen(false);
+    setConfirmDelete(false);
   };
 
-  // --- 編集をやめる（保存せずに閉じる） ---
-  const cancelEdit = () => {
-    setEditingId(null);
+  // --- パネルを閉じる（内部処理。保存はしない） ---
+  const resetPanel = () => {
+    setOpenNote(null);
     setEditTitle('');
     setEditContent('');
     setEditResult('memo');
+    setMenuOpen(false);
+    setConfirmDelete(false);
   };
 
-  // --- 編集内容をDBに上書き保存（UPDATE） ---
-  const handleUpdateNote = async () => {
-    if (!editingId) return;
+  // --- 閉じる＝保存（Google Keep方式。中身が変わっていなければDBに触らない） ---
+  const handleClosePanel = async () => {
+    if (!openNote || saving) return;
 
-    const { error } = await supabase
+    const changed =
+      editTitle !== (openNote.title || '') ||
+      editContent !== (openNote.content || '') ||
+      editResult !== (openNote.result || 'memo');
+
+    // 何も変えていないなら通信せずに閉じるだけ
+    if (!changed) {
+      resetPanel();
+      return;
+    }
+
+    setSaving(true);
+    // ★ .select() を付けて「実際に何行変わったか」を受け取る。
+    //    RLSにUPDATE権限が無いと、エラーは出ないのに0行になるため。
+    const { data, error } = await supabase
       .from('battle_notes')
       .update({
         title: editTitle,
         content: editContent,
         result: editResult,
       })
-      .eq('id', editingId); // ★ このIDの行だけを書き換える
+      .eq('id', openNote.id) // ★ このIDの行だけを書き換える
+      .select();
+    setSaving(false);
 
     if (error) {
       console.error("更新エラー:", error);
       alert('更新できませんでした: ' + error.message);
+      return; // パネルは開いたまま（入力内容を失わせない）
+    }
+    if (!data || data.length === 0) {
+      alert('変更が保存されませんでした。\nDBのRLSポリシーにUPDATEの許可が無い可能性があります。');
       return;
     }
 
-    cancelEdit();
+    resetPanel();
     fetchNotes();
   };
+
+  // --- 削除（確認ダイアログでOKを押した後に実行される） ---
+  const handleDeleteNote = async () => {
+    if (!openNote || saving) return;
+
+    setSaving(true);
+    const { data, error } = await supabase
+      .from('battle_notes')
+      .delete()
+      .eq('id', openNote.id)
+      .select(); // ★ 削除も同じ。0行なら「消えたつもり」の事故になる
+    setSaving(false);
+
+    if (error) {
+      console.error("削除エラー:", error);
+      alert('削除できませんでした: ' + error.message);
+      return;
+    }
+    if (!data || data.length === 0) {
+      alert('削除されませんでした。\nDBのRLSポリシーにDELETEの許可が無い可能性があります。');
+      return;
+    }
+
+    resetPanel();
+    fetchNotes();
+  };
+
+  // --- パネルを開いている間は背後をスクロールさせない ---
+  useEffect(() => {
+    if (!openNote) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prevOverflow; };
+  }, [openNote]);
+
+  // --- Escキーで閉じる（毎回貼り直して、常に最新の入力内容を見るようにする） ---
+  useEffect(() => {
+    if (!openNote) return;
+
+    const onKeyDown = (e) => {
+      if (e.key !== 'Escape') return;
+      // メニューや確認ダイアログが開いていれば、そちらを先に閉じる
+      if (confirmDelete) setConfirmDelete(false);
+      else if (menuOpen) setMenuOpen(false);
+      else handleClosePanel();
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  });
 
   // ==========================================
   // 画面表示（UI）
@@ -248,79 +325,130 @@ export default function App() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {notes.map(note => (
-          <div key={note.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-shadow relative">
-            {editingId === note.id ? (
-              /* ✏️ 編集モード：入力欄に切り替わる */
-              <div>
-                <input
-                  type="text"
-                  placeholder="タイトル"
-                  value={editTitle}
-                  onChange={(e) => setEditTitle(e.target.value)}
-                  className="w-full font-bold outline-none mb-2 border-b border-gray-300 focus:border-red-500 transition"
-                />
-                <textarea
-                  placeholder="バトルメモ"
-                  value={editContent}
-                  onChange={(e) => setEditContent(e.target.value)}
-                  className="w-full text-sm text-gray-600 outline-none resize-none mb-3 border-b border-gray-300 focus:border-red-500 transition"
-                  rows="4"
-                ></textarea>
+          <div
+            key={note.id}
+            onClick={() => handleOpenNote(note)}
+            className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-shadow relative cursor-pointer"
+          >
+            <h3 className="font-bold mb-2 pr-16">{note.title}</h3>
+            <p className="text-sm text-gray-600 whitespace-pre-wrap">{note.content}</p>
 
-                <div className="flex justify-between items-center gap-2">
-                  <select
-                    value={editResult}
-                    onChange={(e) => setEditResult(e.target.value)}
-                    className="p-1 border rounded text-xs outline-none font-bold text-gray-600 bg-gray-50"
-                  >
-                    <option value="memo">MEMO</option>
-                    <option value="win">WIN</option>
-                    <option value="lose">LOSE</option>
-                  </select>
-
-                  <div className="flex gap-2">
-                    <button
-                      onClick={cancelEdit}
-                      className="text-xs font-bold text-gray-500 px-2 py-1 hover:text-gray-800 transition"
-                    >
-                      やめる
-                    </button>
-                    <button
-                      onClick={handleUpdateNote}
-                      className="bg-red-600 text-white text-xs px-4 py-1 rounded font-bold hover:bg-red-700 transition"
-                    >
-                      保存
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              /* 📄 通常モード：いつもの表示 */
-              <div>
-                <h3 className="font-bold mb-2 pr-16">{note.title}</h3>
-                <p className="text-sm text-gray-600 whitespace-pre-wrap">{note.content}</p>
-
-                <span className={`absolute top-4 right-4 text-xs font-bold px-2 py-1 rounded ${
-                  note.result === 'win' ? 'bg-blue-100 text-blue-700' :
-                  note.result === 'lose' ? 'bg-red-100 text-red-700' :
-                  'bg-gray-100 text-gray-700'
-                }`}>
-                  {note.result.toUpperCase()}
-                </span>
-
-                <div className="flex justify-end mt-3">
-                  <button
-                    onClick={() => startEdit(note)}
-                    className="text-xs font-bold text-gray-400 hover:text-red-600 transition"
-                  >
-                    ✏️ 編集
-                  </button>
-                </div>
-              </div>
-            )}
+            <span className={`absolute top-4 right-4 text-xs font-bold px-2 py-1 rounded ${
+              note.result === 'win' ? 'bg-blue-100 text-blue-700' :
+              note.result === 'lose' ? 'bg-red-100 text-red-700' :
+              'bg-gray-100 text-gray-700'
+            }`}>
+              {note.result.toUpperCase()}
+            </span>
           </div>
         ))}
       </div>
+
+      {/* ========== 編集パネル（Google Keep方式：タップで開く / 閉じたら保存） ========== */}
+      {openNote && (
+        <div
+          onClick={handleClosePanel} /* 背景をタップしても閉じる＝保存 */
+          className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center sm:p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()} /* パネル内のタップは背景に伝えない */
+            className="bg-white w-full sm:max-w-2xl h-[85vh] sm:h-auto sm:max-h-[85vh] rounded-t-2xl sm:rounded-lg shadow-2xl flex flex-col"
+          >
+            {/* --- 入力エリア（ここが広くなった） --- */}
+            <div className="flex-1 overflow-y-auto p-5">
+              <input
+                type="text"
+                placeholder="タイトル"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                className="w-full text-xl font-bold outline-none mb-4"
+              />
+              <textarea
+                placeholder="バトルメモを入力..."
+                value={editContent}
+                onChange={(e) => setEditContent(e.target.value)}
+                className="w-full text-base text-gray-700 outline-none resize-none leading-relaxed"
+                rows="12"
+              ></textarea>
+            </div>
+
+            {/* --- 下のバー：タグ選択 ／ ⋯ ／ 閉じる --- */}
+            <div className="flex justify-between items-center gap-3 px-5 py-3 border-t border-gray-100">
+              <select
+                value={editResult}
+                onChange={(e) => setEditResult(e.target.value)}
+                className="p-2 border rounded text-sm outline-none font-bold text-gray-600 bg-gray-50"
+              >
+                <option value="memo">MEMO</option>
+                <option value="win">WIN</option>
+                <option value="lose">LOSE</option>
+              </select>
+
+              <div className="flex items-center gap-1">
+                {/* ⋯ メニュー */}
+                <div className="relative">
+                  <button
+                    onClick={() => setMenuOpen(!menuOpen)}
+                    className="w-10 h-10 rounded-full text-gray-500 hover:bg-gray-100 transition text-xl leading-none"
+                    aria-label="その他の操作"
+                  >
+                    ⋯
+                  </button>
+
+                  {menuOpen && (
+                    <div className="absolute bottom-12 right-0 bg-white border border-gray-200 rounded-md shadow-lg py-1 w-36">
+                      <button
+                        onClick={() => { setMenuOpen(false); setConfirmDelete(true); }}
+                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition"
+                      >
+                        削除
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  onClick={handleClosePanel}
+                  disabled={saving}
+                  className="px-5 py-2 rounded text-sm font-bold text-gray-600 hover:bg-gray-100 transition disabled:opacity-50"
+                >
+                  {saving ? '保存中...' : '閉じる'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* --- 削除の確認（Keepと違ってゴミ箱が無いので、ここで1枚挟む） --- */}
+          {confirmDelete && (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="fixed inset-0 z-60 bg-black/40 flex items-center justify-center p-4"
+            >
+              <div className="bg-white rounded-lg shadow-2xl p-6 w-full max-w-sm">
+                <h3 className="font-bold text-lg mb-2">このメモを削除しますか？</h3>
+                <p className="text-sm text-gray-600 mb-6">
+                  ゴミ箱はありません。削除すると元に戻せません。
+                </p>
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={() => setConfirmDelete(false)}
+                    className="px-4 py-2 rounded text-sm font-bold text-gray-600 hover:bg-gray-100 transition"
+                  >
+                    やめる
+                  </button>
+                  <button
+                    onClick={handleDeleteNote}
+                    disabled={saving}
+                    className="bg-red-600 text-white px-5 py-2 rounded text-sm font-bold hover:bg-red-700 transition disabled:opacity-50"
+                  >
+                    {saving ? '削除中...' : '削除する'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
